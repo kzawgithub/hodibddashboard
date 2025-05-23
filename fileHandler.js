@@ -670,6 +670,34 @@ class FileHandler {
     // Process a file with memory optimization using Web Worker if available
     async processFileWithMemoryOptimization(file) {
         return new Promise((resolve, reject) => {
+            // Initialize file-specific metrics
+            const fileSpecificMetrics = {
+                totalTransactions: 0,
+                totalAmount: 0,
+                hocCount: 0,
+                hocAmount: 0,
+                hocCreditCount: 0,
+                hocCreditAmount: 0,
+                hocDebitCount: 0,
+                hocDebitAmount: 0,
+                ibdCount: 0,
+                ibdAmount: 0,
+                ibdCreditCount: 0,
+                ibdCreditAmount: 0,
+                ibdDebitCount: 0,
+                ibdDebitAmount: 0,
+                hocUniqueSerialCount: 0, // Will be calculated at the end
+                ibdUniqueSerialCount: 0, // Will be calculated at the end
+                currencyCounts: {
+                    USD: 0,
+                    MMK: 0
+                },
+                currencyAmounts: {
+                    USD: 0,
+                    MMK: 0
+                }
+            };
+
             // Store file data for reference
             const fileData = {
                 fileName: file.name,
@@ -720,54 +748,58 @@ class FileHandler {
                     // Count valid lines in this chunk (for debugging)
                     let validLinesInChunk = 0;
 
-                    // Process the chunk using Web Worker if available
-                    if (this.worker) {
-                        // Process sample rows for display regardless of worker
-                        if (isFirstChunk && lines.length > 1) {
-                            // Get a few sample rows for reference
-                            for (let i = 1; i < Math.min(10, lines.length); i++) {
-                                if (lines[i].trim() !== '') {
-                                    const rowData = this.parseCSVLine(lines[i]);
-                                    if (rowData.length >= header.length) {
-                                        const rowObject = {};
-                                        header.forEach((key, index) => {
-                                            rowObject[key] = rowData[index] || '';
-                                        });
-                                        if (rowObject.REPORTTYPE) {
-                                            fileData.sampleRows.push(rowObject);
-                                        }
+                    // Process sample rows for display (can be kept for UI purposes if needed)
+                    if (isFirstChunk && lines.length > 1) {
+                        for (let i = 1; i < Math.min(10, lines.length); i++) {
+                            if (lines[i].trim() !== '') {
+                                const rowData = this.parseCSVLine(lines[i]);
+                                if (rowData.length >= header.length) {
+                                    const rowObject = {};
+                                    header.forEach((key, index) => {
+                                        rowObject[key] = rowData[index] || '';
+                                    });
+                                    if (rowObject.REPORTTYPE) {
+                                        fileData.sampleRows.push(rowObject);
                                     }
                                 }
                             }
                         }
+                    }
 
-                        // Process the chunk in the main thread to ensure data is processed
-                        const processedRows = this.processChunkInMainThread(lines, header, isFirstChunk, fileData);
-                        validLinesInChunk += processedRows;
+                    // Process the chunk and get chunk-specific metrics
+                    const chunkMetricsResult = this.processChunkForMetrics(lines, header, isFirstChunk, fileData.fileName);
+                    validLinesInChunk += chunkMetricsResult.processedRows;
 
-                        // Also send to worker for parallel processing
+                    // Accumulate chunk metrics into fileSpecificMetrics
+                    this.accumulateMetrics(fileSpecificMetrics, chunkMetricsResult.metrics);
+
+
+                    // If worker is available, it can still be used for other tasks or a different processing pipeline
+                    // For now, we rely on main thread processing for fileSpecificMetrics accuracy.
+                    if (this.worker) {
+                        // The worker's role might need to be re-evaluated.
+                        // For now, let's assume it might be doing something else or could be removed
+                        // if its sole purpose was metrics calculation.
+                        // To avoid breaking existing worker logic, we can still send data,
+                        // but the primary source of truth for fileMetrics is now the main thread.
                         try {
                             this.worker.postMessage({
-                                action: 'processChunk',
+                                action: 'processChunk', // This action might need to be handled differently by the worker
                                 data: {
-                                    chunk: combinedText,
+                                    chunk: combinedText, // Sending combinedText as before
                                     header: header,
-                                    isFirstChunk: isFirstChunk
+                                    isFirstChunk: isFirstChunk,
+                                    fileName: file.name // Pass fileName for context
                                 }
                             });
                         } catch (workerError) {
                             console.error('Error sending data to worker:', workerError);
-                            // Worker failed, but we already processed in main thread so we can continue
                         }
-                    } else {
-                        // Fallback to processing in the main thread if worker is not available
-                        const processedRows = this.processChunkInMainThread(lines, header, isFirstChunk, fileData);
-                        validLinesInChunk += processedRows;
                     }
 
                     // Update row count with actual processed rows
-                    fileData.rowCount += lines.length - (isFirstChunk ? 1 : 0);
-                    fileData.processedRowCount += validLinesInChunk;
+                    fileData.rowCount += lines.length - (isFirstChunk ? 1 : 0); // total lines read
+                    fileData.processedRowCount += validLinesInChunk; // valid transactions processed
 
                     // Update progress
                     offset += CHUNK_SIZE;
@@ -784,194 +816,49 @@ class FileHandler {
                             fileName: fileData.fileName,
                             rowCount: fileData.rowCount,
                             processedRowCount: fileData.processedRowCount,
-                            sampleRows: fileData.sampleRows
+                            sampleRows: fileData.sampleRows // Sample rows are still useful for quick display if needed
                         });
 
-                        // Store metrics for this file
+                        // Finalize HOC and IBD unique serial counts for the file
+                        // These sets (this.fileHocSerialNumbers and this.fileIbdSerialNumbers)
+                        // should be temporary and specific to this file processing instance.
+                        // Let's create them here before storing.
+                        const fileHocSerialNumbers = new Set();
+                        const fileIbdSerialNumbers = new Set();
+                        // This requires iterating through the file's rows again or collecting serials during chunk processing.
+                        // For now, we'll assume this.updateMetricsWithRow (called by processChunkForMetrics)
+                        // correctly updates global serial number sets (this.hocSerialNumbers, this.ibdSerialNumbers).
+                        // We need a way to get serial numbers *only* for the current file.
+
+                        // The most straightforward way is to process rows and collect serials specifically for this file.
+                        // The existing this.updateMetricsWithRow updates global sets.
+                        // We need a version that updates file-local sets for fileSpecificMetrics.
+                        // This is already handled by processChunkForMetrics and accumulateMetrics.
+                        // The serial numbers are collected in fileSpecificMetrics.hocSerialNumbers (Set) and fileSpecificMetrics.ibdSerialNumbers (Set)
+                        // by the accumulateMetrics function.
+
+                        // Update unique serial counts in fileSpecificMetrics from the sets
+                        fileSpecificMetrics.hocUniqueSerialCount = fileSpecificMetrics.hocSerialNumbers ? fileSpecificMetrics.hocSerialNumbers.size : 0;
+                        fileSpecificMetrics.ibdUniqueSerialCount = fileSpecificMetrics.ibdSerialNumbers ? fileSpecificMetrics.ibdSerialNumbers.size : 0;
+
+
+                        // Store the fully accumulated fileSpecificMetrics
+                        this.fileMetrics.set(file.name, fileSpecificMetrics);
+
+                        // Store the serial numbers specific to this file
+                        // These are already part of fileSpecificMetrics if collected correctly
+                        this.fileSerialNumbers.set(file.name, {
+                             hoc: fileSpecificMetrics.hocSerialNumbers || new Set(),
+                             ibd: fileSpecificMetrics.ibdSerialNumbers || new Set()
+                        });
+
+
+                        // Update global metrics in DataProcessor with the metrics from this file
                         if (window.dataProcessor) {
-                            // Get metrics before and after processing this file to calculate the difference
-                            const currentMetrics = window.dataProcessor.getSummaryMetrics();
-
-                            // Create metrics object that represents only this file's contribution
-                            const fileMetrics = {
-                                totalTransactions: fileData.processedRowCount,
-                                totalAmount: 0, // Will be calculated from the file's data
-                                hocCount: 0,
-                                hocAmount: 0,
-                                hocCreditCount: 0,
-                                hocCreditAmount: 0,
-                                hocDebitCount: 0,
-                                hocDebitAmount: 0,
-                                ibdCount: 0,
-                                ibdAmount: 0,
-                                ibdCreditCount: 0,
-                                ibdCreditAmount: 0,
-                                ibdDebitCount: 0,
-                                ibdDebitAmount: 0,
-                                currencyCounts: {
-                                    USD: 0,
-                                    MMK: 0
-                                },
-                                currencyAmounts: {
-                                    USD: 0,
-                                    MMK: 0
-                                }
-                            };
-
-                            // Calculate metrics from the file's sample rows
-                            if (fileData.sampleRows && fileData.sampleRows.length > 0) {
-                                // Create temporary sets to track unique serial numbers for this file only
-                                const fileHocSerialNumbers = new Set();
-                                const fileIbdSerialNumbers = new Set();
-
-                                // Process each sample row to calculate metrics
-                                fileData.sampleRows.forEach(row => {
-                                    // Helper function to safely add numeric values
-                                    const safeAdd = (a, b) => {
-                                        const numA = typeof a === 'number' && !isNaN(a) ? a : 0;
-                                        const numB = typeof b === 'number' && !isNaN(b) ? b : 0;
-                                        return numA + numB;
-                                    };
-
-                                    // Get amount
-                                    const amount = typeof row.TRANSACTION_AMOUNT === 'string' ?
-                                        parseFloat(row.TRANSACTION_AMOUNT) || 0 :
-                                        (typeof row.TRANSACTION_AMOUNT === 'number' ? row.TRANSACTION_AMOUNT : 0);
-
-                                    // Determine if credit or debit
-                                    const isCredit = row.ACCOUNT_HOLDER_ACCOUNT_ROLE === 'C';
-                                    const isDebit = row.ACCOUNT_HOLDER_ACCOUNT_ROLE === 'D';
-
-                                    // Get serial number
-                                    const serialNo = row.SERIAL_NO || '';
-
-                                    // Update total amount
-                                    fileMetrics.totalAmount = safeAdd(fileMetrics.totalAmount, amount);
-
-                                    // Update metrics based on report type
-                                    if (row.REPORTTYPE === 'HOC') {
-                                        fileMetrics.hocCount++;
-                                        fileMetrics.hocAmount = safeAdd(fileMetrics.hocAmount, amount);
-
-                                        // Track serial number
-                                        if (serialNo) {
-                                            fileHocSerialNumbers.add(serialNo);
-                                        }
-
-                                        // Update credit/debit counts
-                                        if (isCredit) {
-                                            fileMetrics.hocCreditCount++;
-                                            fileMetrics.hocCreditAmount = safeAdd(fileMetrics.hocCreditAmount, amount);
-                                        } else if (isDebit) {
-                                            fileMetrics.hocDebitCount++;
-                                            fileMetrics.hocDebitAmount = safeAdd(fileMetrics.hocDebitAmount, amount);
-                                        }
-                                    } else if (row.REPORTTYPE === 'IBD') {
-                                        fileMetrics.ibdCount++;
-                                        fileMetrics.ibdAmount = safeAdd(fileMetrics.ibdAmount, amount);
-
-                                        // Track serial number
-                                        if (serialNo) {
-                                            fileIbdSerialNumbers.add(serialNo);
-                                        }
-
-                                        // Update credit/debit counts
-                                        if (isCredit) {
-                                            fileMetrics.ibdCreditCount++;
-                                            fileMetrics.ibdCreditAmount = safeAdd(fileMetrics.ibdCreditAmount, amount);
-                                        } else if (isDebit) {
-                                            fileMetrics.ibdDebitCount++;
-                                            fileMetrics.ibdDebitAmount = safeAdd(fileMetrics.ibdDebitAmount, amount);
-                                        }
-                                    } else if (row.REPORTTYPE === 'WU') {
-                                        // For WU transactions, track serial numbers for IBD
-                                        if (serialNo) {
-                                            fileIbdSerialNumbers.add(serialNo);
-                                        }
-                                    }
-
-                                    // Update currency counts
-                                    if (row.TRANSACTION_CURRENCY === 'USD') {
-                                        fileMetrics.currencyCounts.USD++;
-                                        fileMetrics.currencyAmounts.USD = safeAdd(fileMetrics.currencyAmounts.USD, amount);
-                                    } else if (row.TRANSACTION_CURRENCY === 'MMK') {
-                                        fileMetrics.currencyCounts.MMK++;
-                                        fileMetrics.currencyAmounts.MMK = safeAdd(fileMetrics.currencyAmounts.MMK, amount);
-                                    }
-                                });
-
-                                // Scale metrics based on the ratio of total rows to sample rows
-                                const scaleFactor = fileData.processedRowCount / fileData.sampleRows.length;
-
-                                // Scale all count metrics (except serial numbers which are handled separately)
-                                fileMetrics.hocCount = Math.round(fileMetrics.hocCount * scaleFactor);
-                                fileMetrics.hocCreditCount = Math.round(fileMetrics.hocCreditCount * scaleFactor);
-                                fileMetrics.hocDebitCount = Math.round(fileMetrics.hocDebitCount * scaleFactor);
-                                fileMetrics.ibdCount = Math.round(fileMetrics.ibdCount * scaleFactor);
-                                fileMetrics.ibdCreditCount = Math.round(fileMetrics.ibdCreditCount * scaleFactor);
-                                fileMetrics.ibdDebitCount = Math.round(fileMetrics.ibdDebitCount * scaleFactor);
-                                fileMetrics.currencyCounts.USD = Math.round(fileMetrics.currencyCounts.USD * scaleFactor);
-                                fileMetrics.currencyCounts.MMK = Math.round(fileMetrics.currencyCounts.MMK * scaleFactor);
-
-                                // Scale all amount metrics
-                                fileMetrics.totalAmount *= scaleFactor;
-                                fileMetrics.hocAmount *= scaleFactor;
-                                fileMetrics.hocCreditAmount *= scaleFactor;
-                                fileMetrics.hocDebitAmount *= scaleFactor;
-                                fileMetrics.ibdAmount *= scaleFactor;
-                                fileMetrics.ibdCreditAmount *= scaleFactor;
-                                fileMetrics.ibdDebitAmount *= scaleFactor;
-                                fileMetrics.currencyAmounts.USD *= scaleFactor;
-                                fileMetrics.currencyAmounts.MMK *= scaleFactor;
-
-                                // Store the metrics for this file
-                                this.fileMetrics.set(file.name, fileMetrics);
-
-                                // Store only the serial numbers that came from this file
-                                this.fileSerialNumbers.set(file.name, {
-                                    hoc: fileHocSerialNumbers,
-                                    ibd: fileIbdSerialNumbers
-                                });
-                            } else {
-                                // If no sample rows, use proportional estimation based on total metrics
-                                // This is a fallback method that's less accurate
-                                const totalFiles = this.processedData.length;
-                                if (totalFiles > 0 && currentMetrics.totalTransactions > 0) {
-                                    const proportion = fileData.processedRowCount / currentMetrics.totalTransactions;
-
-                                    // Scale all metrics by the proportion
-                                    fileMetrics.totalAmount = currentMetrics.totalAmount * proportion;
-                                    fileMetrics.hocCount = Math.round(currentMetrics.hocCount * proportion);
-                                    fileMetrics.hocAmount = currentMetrics.hocAmount * proportion;
-                                    fileMetrics.hocCreditCount = Math.round(currentMetrics.hocCreditCount * proportion);
-                                    fileMetrics.hocCreditAmount = currentMetrics.hocCreditAmount * proportion;
-                                    fileMetrics.hocDebitCount = Math.round(currentMetrics.hocDebitCount * proportion);
-                                    fileMetrics.hocDebitAmount = currentMetrics.hocDebitAmount * proportion;
-                                    fileMetrics.ibdCount = Math.round(currentMetrics.ibdCount * proportion);
-                                    fileMetrics.ibdAmount = currentMetrics.ibdAmount * proportion;
-                                    fileMetrics.ibdCreditCount = Math.round(currentMetrics.ibdCreditCount * proportion);
-                                    fileMetrics.ibdCreditAmount = currentMetrics.ibdCreditAmount * proportion;
-                                    fileMetrics.ibdDebitCount = Math.round(currentMetrics.ibdDebitCount * proportion);
-                                    fileMetrics.ibdDebitAmount = currentMetrics.ibdDebitAmount * proportion;
-                                    fileMetrics.currencyCounts.USD = Math.round(currentMetrics.currencyCounts.USD * proportion);
-                                    fileMetrics.currencyCounts.MMK = Math.round(currentMetrics.currencyCounts.MMK * proportion);
-                                    fileMetrics.currencyAmounts.USD = currentMetrics.currencyAmounts.USD * proportion;
-                                    fileMetrics.currencyAmounts.MMK = currentMetrics.currencyAmounts.MMK * proportion;
-                                }
-
-                                // Store the metrics for this file
-                                this.fileMetrics.set(file.name, fileMetrics);
-
-                                // Create empty sets for serial numbers since we don't have sample data
-                                this.fileSerialNumbers.set(file.name, {
-                                    hoc: new Set(),
-                                    ibd: new Set()
-                                });
-                            }
-
-                            console.log(`Stored metrics for file: ${file.name}`);
+                            window.dataProcessor.updateMetrics(fileSpecificMetrics);
                         }
 
+                        console.log(`Stored accurate metrics for file: ${file.name}`, fileSpecificMetrics);
                         console.log(`File ${fileData.fileName} processed: ${fileData.processedRowCount} valid rows out of ${fileData.rowCount} total rows`);
 
                         // Ensure the transaction count is accurate in the UI
@@ -1007,9 +894,10 @@ class FileHandler {
         });
     }
 
-    // Process a chunk in the main thread (fallback if worker is not available)
-    processChunkInMainThread(lines, header, isFirstChunk, fileData) {
-        // Create temporary metrics for this chunk
+    // Renamed from processChunkInMainThread to processChunkForMetrics
+    // This function now returns metrics for the chunk and does not update global state directly.
+    processChunkForMetrics(lines, header, isFirstChunk, fileName) {
+        // Initialize metrics for this specific chunk
         const chunkMetrics = {
             totalTransactions: 0,
             totalAmount: 0,
@@ -1025,115 +913,107 @@ class FileHandler {
             ibdCreditAmount: 0,
             ibdDebitCount: 0,
             ibdDebitAmount: 0,
-            hocUniqueSerialCount: 0,
-            ibdUniqueSerialCount: 0,
-            currencyCounts: {
-                USD: 0,
-                MMK: 0
-            },
-            currencyAmounts: {
-                USD: 0,
-                MMK: 0
-            }
+            currencyCounts: { USD: 0, MMK: 0 },
+            currencyAmounts: { USD: 0, MMK: 0 },
+            // Temporary sets for unique serials within this chunk for this file
+            hocSerialNumbers: new Set(),
+            ibdSerialNumbers: new Set()
         };
 
-        // We don't need to track serial numbers here as they're tracked at the class level
-
-        // Temporary date data for this chunk
-        const dateData = {};
-
-        // Start processing from line 1 if this is the first chunk (skip header)
+        const dateData = {}; // For table data, can still be updated globally or returned
         const startIndex = isFirstChunk ? 1 : 0;
-
-        // Count of valid rows processed in this chunk
         let validRowsProcessed = 0;
 
-        // Process each line in the chunk
         for (let i = startIndex; i < lines.length; i++) {
             const line = lines[i].trim();
             if (line === '') continue;
 
             const rowData = this.parseCSVLine(line);
-
-            // Only process rows that have enough data
             if (rowData.length >= header.length) {
-                // Create an object with all fields for accurate processing
                 const rowObject = {};
                 header.forEach((key, index) => {
                     rowObject[key] = rowData[index] || '';
                 });
 
-                // Only process rows that have a REPORTTYPE value
                 if (rowObject.REPORTTYPE) {
-                    // Increment valid row counter
                     validRowsProcessed++;
-
-                    // Keep sample rows for reference (increased to 10 for better representation)
-                    if (fileData.sampleRows.length < 10 && Math.random() < 0.5) {
-                        fileData.sampleRows.push(rowObject);
-                    }
-
-                    // Process metrics directly instead of storing the row
-                    this.updateMetricsWithRow(rowObject, chunkMetrics);
-
-                    // Update date-based aggregation for table
+                    // Update chunkMetrics with this row
+                    this.updateMetricsWithRow(rowObject, chunkMetrics, true); // Pass true for isChunkOrFileSpecific
+                    // Update date-based aggregation for table (can remain global for now)
                     this.updateDateData(rowObject, dateData);
                 }
             }
         }
 
-        // Log chunk processing statistics
         if (validRowsProcessed > 0) {
-            console.log(`Processed chunk with ${validRowsProcessed} valid transactions`);
+            // console.log(`File ${fileName}: Processed chunk with ${validRowsProcessed} valid transactions`);
         }
 
-        // Update global metrics with this chunk's metrics
-        this.updateGlobalMetrics(chunkMetrics);
-
-        // Update table data with date aggregation
+        // Update table data with date aggregation from this chunk
         this.updateTableData(dateData);
 
-        // Return the count of valid rows processed
-        return validRowsProcessed;
+
+        return { metrics: chunkMetrics, processedRows: validRowsProcessed };
     }
 
-    // Update metrics directly with a row instead of storing all rows
-    updateMetricsWithRow(row, metrics) {
-        // Helper function to safely add numeric values
-        const safeAdd = (a, b) => {
-            const numA = typeof a === 'number' && !isNaN(a) ? a : 0;
-            const numB = typeof b === 'number' && !isNaN(b) ? b : 0;
-            return numA + numB;
-        };
+    // Helper function to accumulate metrics from a chunk into a target metrics object
+    accumulateMetrics(targetMetrics, chunkMetrics) {
+        const safeAdd = (a, b) => (Number(a) || 0) + (Number(b) || 0);
 
-        // Ensure amount is a number with proper validation
-        const amount = typeof row.TRANSACTION_AMOUNT === 'string' ?
-            parseFloat(row.TRANSACTION_AMOUNT) || 0 :
-            (typeof row.TRANSACTION_AMOUNT === 'number' ? row.TRANSACTION_AMOUNT : 0);
+        targetMetrics.totalTransactions = safeAdd(targetMetrics.totalTransactions, chunkMetrics.totalTransactions);
+        targetMetrics.totalAmount = safeAdd(targetMetrics.totalAmount, chunkMetrics.totalAmount);
+        targetMetrics.hocCount = safeAdd(targetMetrics.hocCount, chunkMetrics.hocCount);
+        targetMetrics.hocAmount = safeAdd(targetMetrics.hocAmount, chunkMetrics.hocAmount);
+        targetMetrics.hocCreditCount = safeAdd(targetMetrics.hocCreditCount, chunkMetrics.hocCreditCount);
+        targetMetrics.hocCreditAmount = safeAdd(targetMetrics.hocCreditAmount, chunkMetrics.hocCreditAmount);
+        targetMetrics.hocDebitCount = safeAdd(targetMetrics.hocDebitCount, chunkMetrics.hocDebitCount);
+        targetMetrics.hocDebitAmount = safeAdd(targetMetrics.hocDebitAmount, chunkMetrics.hocDebitAmount);
+        targetMetrics.ibdCount = safeAdd(targetMetrics.ibdCount, chunkMetrics.ibdCount);
+        targetMetrics.ibdAmount = safeAdd(targetMetrics.ibdAmount, chunkMetrics.ibdAmount);
+        targetMetrics.ibdCreditCount = safeAdd(targetMetrics.ibdCreditCount, chunkMetrics.ibdCreditCount);
+        targetMetrics.ibdCreditAmount = safeAdd(targetMetrics.ibdCreditAmount, chunkMetrics.ibdCreditAmount);
+        targetMetrics.ibdDebitCount = safeAdd(targetMetrics.ibdDebitCount, chunkMetrics.ibdDebitCount);
+        targetMetrics.ibdDebitAmount = safeAdd(targetMetrics.ibdDebitAmount, chunkMetrics.ibdDebitAmount);
 
-        // Update total counts
+        targetMetrics.currencyCounts.USD = safeAdd(targetMetrics.currencyCounts.USD, chunkMetrics.currencyCounts.USD);
+        targetMetrics.currencyCounts.MMK = safeAdd(targetMetrics.currencyCounts.MMK, chunkMetrics.currencyCounts.MMK);
+        targetMetrics.currencyAmounts.USD = safeAdd(targetMetrics.currencyAmounts.USD, chunkMetrics.currencyAmounts.USD);
+        targetMetrics.currencyAmounts.MMK = safeAdd(targetMetrics.currencyAmounts.MMK, chunkMetrics.currencyAmounts.MMK);
+
+        // Accumulate unique serial numbers
+        if (!targetMetrics.hocSerialNumbers) targetMetrics.hocSerialNumbers = new Set();
+        if (!targetMetrics.ibdSerialNumbers) targetMetrics.ibdSerialNumbers = new Set();
+
+        chunkMetrics.hocSerialNumbers.forEach(sn => targetMetrics.hocSerialNumbers.add(sn));
+        chunkMetrics.ibdSerialNumbers.forEach(sn => targetMetrics.ibdSerialNumbers.add(sn));
+    }
+
+
+    // Update metrics directly with a row.
+    // Added isChunkOrFileSpecific flag to control serial number collection.
+    // If true, it adds to metrics.hocSerialNumbers/ibdSerialNumbers (for chunk/file specific counts).
+    // Otherwise, it adds to this.hocSerialNumbers/ibdSerialNumbers (for global counts).
+    updateMetricsWithRow(row, metrics, isChunkOrFileSpecific = false) {
+        const safeAdd = (a, b) => (Number(a) || 0) + (Number(b) || 0);
+        const amount = parseFloat(row.TRANSACTION_AMOUNT) || 0;
+
         metrics.totalTransactions++;
         metrics.totalAmount = safeAdd(metrics.totalAmount, amount);
 
-        // Determine if this is a credit or debit transaction
         const isCredit = row.ACCOUNT_HOLDER_ACCOUNT_ROLE === 'C';
         const isDebit = row.ACCOUNT_HOLDER_ACCOUNT_ROLE === 'D';
-
-        // Get the serial number (with error handling)
         const serialNo = row.SERIAL_NO || '';
 
-        // Update report type counts
+        const hocTargetSet = isChunkOrFileSpecific ? metrics.hocSerialNumbers : this.hocSerialNumbers;
+        const ibdTargetSet = isChunkOrFileSpecific ? metrics.ibdSerialNumbers : this.ibdSerialNumbers;
+        const allTargetSet = isChunkOrFileSpecific ? null : this.allSerialNumbers; // allSerialNumbers is global only
+
         if (row.REPORTTYPE === 'HOC') {
             metrics.hocCount++;
             metrics.hocAmount = safeAdd(metrics.hocAmount, amount);
+            if (serialNo && hocTargetSet) hocTargetSet.add(serialNo);
+            if (serialNo && allTargetSet) allTargetSet.add(serialNo);
 
-            // Track unique serial numbers for HOC
-            if (serialNo && this.hocSerialNumbers) {
-                this.hocSerialNumbers.add(serialNo);
-                this.allSerialNumbers.add(serialNo);
-            }
-
-            // Update HOC credit/debit counts
             if (isCredit) {
                 metrics.hocCreditCount++;
                 metrics.hocCreditAmount = safeAdd(metrics.hocCreditAmount, amount);
@@ -1144,14 +1024,9 @@ class FileHandler {
         } else if (row.REPORTTYPE === 'IBD') {
             metrics.ibdCount++;
             metrics.ibdAmount = safeAdd(metrics.ibdAmount, amount);
+            if (serialNo && ibdTargetSet) ibdTargetSet.add(serialNo);
+            if (serialNo && allTargetSet) allTargetSet.add(serialNo);
 
-            // Track unique serial numbers for IBD
-            if (serialNo && this.ibdSerialNumbers) {
-                this.ibdSerialNumbers.add(serialNo);
-                this.allSerialNumbers.add(serialNo);
-            }
-
-            // Update IBD credit/debit counts
             if (isCredit) {
                 metrics.ibdCreditCount++;
                 metrics.ibdCreditAmount = safeAdd(metrics.ibdCreditAmount, amount);
@@ -1160,15 +1035,10 @@ class FileHandler {
                 metrics.ibdDebitAmount = safeAdd(metrics.ibdDebitAmount, amount);
             }
         } else if (row.REPORTTYPE === 'WU') {
-            // For WU transactions, only track unique serial numbers for IBD count
-            // but don't include in other IBD metrics
-            if (serialNo && this.ibdSerialNumbers) {
-                this.ibdSerialNumbers.add(serialNo);
-                this.allSerialNumbers.add(serialNo);
-            }
+            if (serialNo && ibdTargetSet) ibdTargetSet.add(serialNo);
+            if (serialNo && allTargetSet) allTargetSet.add(serialNo);
         }
 
-        // Update currency counts
         if (row.TRANSACTION_CURRENCY === 'USD') {
             metrics.currencyCounts.USD++;
             metrics.currencyAmounts.USD = safeAdd(metrics.currencyAmounts.USD, amount);
@@ -1270,22 +1140,9 @@ class FileHandler {
         }
     }
 
-    // Update global metrics with a file's metrics
-    updateGlobalMetrics(fileMetrics) {
-        // If we have a data processor, update it with the metrics
-        if (window.dataProcessor) {
-            // Log metrics being added for debugging
-            if (fileMetrics.totalTransactions > 0) {
-                console.log(`Adding metrics: ${fileMetrics.totalTransactions} transactions (HOC: ${fileMetrics.hocCount}, IBD: ${fileMetrics.ibdCount})`);
-            }
-
-            window.dataProcessor.updateMetrics(fileMetrics);
-
-            // Log current metrics after update
-            const currentMetrics = window.dataProcessor.getSummaryMetrics();
-            console.log(`Current total metrics: ${currentMetrics.totalTransactions} transactions`);
-        }
-    }
+    // Update global metrics with a file's metrics - This function is no longer needed here
+    // as global metrics are updated in DataProcessor after a file is fully processed.
+    // updateGlobalMetrics(fileMetrics) { ... }
 
     // Update table data with date aggregation
     updateTableData(dateData) {
