@@ -25,6 +25,9 @@ class FileHandler {
         // Map to track serial numbers per file
         this.fileSerialNumbers = new Map();
 
+        // ADD THIS LINE: Set to track uploaded filenames in the current session
+        this.uploadedFileNamesInSession = new Set();
+
         // Initialize web worker
         this.initWorker();
 
@@ -126,7 +129,12 @@ class FileHandler {
     // Handle the selected files (without processing)
     selectFiles(fileList) {
         if (this.isProcessing) {
-            alert('Please wait for the current files to finish processing.');
+            // Use window.app.showNotification for consistency, if available
+            if (window.app) {
+                window.app.showNotification('Please wait for the current files to finish processing.', 'warning');
+            } else {
+                alert('Please wait for the current files to finish processing.');
+            }
             return;
         }
 
@@ -134,43 +142,70 @@ class FileHandler {
         const newFiles = Array.from(fileList).filter(file => file.name.toLowerCase().endsWith('.csv'));
 
         if (newFiles.length === 0) {
-            alert('Please select CSV files only.');
+            // Use window.app.showNotification
+            if (window.app) {
+                window.app.showNotification('Please select CSV files only.', 'info');
+            } else {
+                alert('Please select CSV files only.');
+            }
             return;
         }
 
-        // Check for already processed files
         let alreadyProcessedCount = 0;
         const unprocessedFiles = [];
+        // let duplicateFileCount = 0; // Optional: for user feedback if multiple duplicates are selected
 
         newFiles.forEach(file => {
-            if (window.dataProcessor && window.dataProcessor.isFileProcessed(file)) {
-                alreadyProcessedCount++;
-                // Still add to the list but mark as already processed
-                file.isAlreadyProcessed = true;
-                unprocessedFiles.push(file);
+            // NEW DUPLICATE CHECK
+            if (this.uploadedFileNamesInSession.has(file.name)) {
+                if (window.app) {
+                    window.app.showNotification(`File '${file.name}' has already been uploaded in this session. Please refresh the application if you need to upload it again.`, 'error');
+                } else {
+                    // Fallback if window.app is not available for some reason
+                    alert(`File '${file.name}' has already been uploaded in this session. Please refresh the application if you need to upload it again.`);
+                }
+                // duplicateFileCount++; // Optional
             } else {
-                unprocessedFiles.push(file);
+                // Not a duplicate in this session, add to session tracking
+                this.uploadedFileNamesInSession.add(file.name);
+
+                // Existing logic for already processed files (by dataProcessor)
+                if (window.dataProcessor && window.dataProcessor.isFileProcessed(file)) {
+                    alreadyProcessedCount++;
+                    // Still add to the list but mark as already processed
+                    file.isAlreadyProcessed = true;
+                    unprocessedFiles.push(file);
+                } else {
+                    unprocessedFiles.push(file);
+                }
             }
         });
 
-        // Add files to the list
-        this.files = [...this.files, ...unprocessedFiles];
+        // Add only the non-duplicate, correctly typed files to the list
+        // Important: Only add to this.files if there are new unprocessedFiles to add,
+        // otherwise, if all files selected were duplicates, this would add an empty array.
+        if (unprocessedFiles.length > 0) {
+            this.files = [...this.files, ...unprocessedFiles];
+        }
+        
+        // Update the file list UI in all cases, as it might need to reflect changes
+        // even if no new files are added (e.g. if a file was processed by dataProcessor before)
         this.updateFileList();
 
         // Show the submit button if files are selected and update its state
         this.updateSubmitButtonVisibility();
 
-        // Show notification if some files were already processed
+        // Show notification if some files were already processed by dataProcessor
         if (alreadyProcessedCount > 0 && window.app) {
             window.app.showNotification(
-                `${alreadyProcessedCount} file(s) have already been processed. They will be marked in the list.`,
+                `${alreadyProcessedCount} file(s) have already been processed by the system. They will be marked in the list.`,
                 'info'
             );
         }
 
         // Show notification if new unprocessed files were added
-        const hasUnprocessedFiles = this.hasUnprocessedFiles();
-        if (hasUnprocessedFiles && window.app) {
+        const newFilesSuccessfullyAddedToUnprocessed = unprocessedFiles.some(f => !f.isAlreadyProcessed);
+        if (newFilesSuccessfullyAddedToUnprocessed && window.app) {
             window.app.showNotification(
                 'New unprocessed files detected. You can now click "Process Files" to process them.',
                 'success'
