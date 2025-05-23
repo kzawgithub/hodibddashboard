@@ -156,8 +156,9 @@ class FileHandler {
         // let duplicateFileCount = 0; // Optional: for user feedback if multiple duplicates are selected
 
         newFiles.forEach(file => {
-            // NEW DUPLICATE CHECK
-            if (this.uploadedFileNamesInSession.has(file.name)) {
+            const lowerCaseFileName = file.name.toLowerCase(); // CASE INSENSITIVE
+
+            if (this.uploadedFileNamesInSession.has(lowerCaseFileName)) { // CASE INSENSITIVE CHECK
                 if (window.app) {
                     window.app.showNotification(`File '${file.name}' has already been uploaded in this session. Please refresh the application if you need to upload it again.`, 'error');
                 } else {
@@ -166,8 +167,7 @@ class FileHandler {
                 }
                 // duplicateFileCount++; // Optional
             } else {
-                // Not a duplicate in this session, add to session tracking
-                this.uploadedFileNamesInSession.add(file.name);
+                this.uploadedFileNamesInSession.add(lowerCaseFileName); // CASE INSENSITIVE ADD
 
                 // Existing logic for already processed files (by dataProcessor)
                 if (window.dataProcessor && window.dataProcessor.isFileProcessed(file)) {
