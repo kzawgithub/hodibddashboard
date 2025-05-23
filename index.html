@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Transaction Dashboard V2.0</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Include Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Include SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Financial Transaction Dashboard V2.0</h1>
+        </header>
+
+        <!-- Confirmation Dialog -->
+        <div id="confirmationDialog" class="confirmation-dialog">
+            <div class="confirmation-content">
+                <h3 class="confirmation-title">Confirm Action</h3>
+                <p id="confirmationMessage" class="confirmation-message">Are you sure you want to perform this action?</p>
+                <div class="confirmation-buttons">
+                    <button id="cancelBtn" class="btn cancel-btn">Cancel</button>
+                    <button id="confirmBtn" class="btn confirm-btn">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+        <main>
+            <!-- File Upload Section -->
+            <section class="upload-section">
+                <div class="upload-container" id="dropArea">
+                    <div class="upload-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                    </div>
+                    <h3>Upload CSV Files</h3>
+                    <p>Drag & drop files here or click to browse</p>
+                    <input type="file" id="fileInput" multiple accept=".csv" style="display: none;">
+                    <p class="file-info">Multiple files supported (up to 3GB total)</p>
+                </div>
+                <div class="file-list" id="fileList">
+                    <h3>Selected Files</h3>
+                    <ul id="uploadedFilesList"></ul>
+                    <div class="submit-container" id="submitContainer">
+                        <button id="submitFiles" class="btn submit-btn">Process Files</button>
+                    </div>
+                </div>
+                <div class="upload-progress" id="uploadProgress">
+                    <div class="progress-container">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    <p id="progressText">0% - Processing files...</p>
+                </div>
+            </section>
+
+            <!-- Filter Section -->
+            <section class="filter-section">
+                <div class="filter-container">
+                    <h3>Filters</h3>
+                    <div class="filter-controls">
+                        <div class="filter-group">
+                            <label for="currencyFilter">Currency</label>
+                            <select id="currencyFilter">
+                                <option value="all">All Currencies</option>
+                                <option value="USD">USD</option>
+                                <option value="MMK">MMK</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="reportTypeFilter">Report Type</label>
+                            <select id="reportTypeFilter">
+                                <option value="all">All Types</option>
+                                <option value="HOC">HOC</option>
+                                <option value="IBD">IBD</option>
+                            </select>
+                        </div>
+                        <div class="filter-buttons">
+                            <button id="applyFilters" class="btn">Apply Filters</button>
+                            <button id="resetFilters" class="btn btn-secondary">Reset</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Summary Metrics Section -->
+            <section class="metrics-section">
+                <div class="metrics-container">
+                    <h3>Summary Metrics</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <h4>Total Transactions</h4>
+                            <p id="totalTransactions">0</p>
+                        </div>
+                        <div class="metric-card">
+                            <h4>Total Amount</h4>
+                            <p id="totalAmount">0.00 MMK</p>
+                        </div>
+                        <div class="metric-card">
+                            <h4>Files Processed</h4>
+                            <p id="filesProcessed">0</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Transaction Breakdown Section -->
+            <section class="breakdown-section">
+                <div class="breakdown-container">
+                    <h3>Transaction Breakdown</h3>
+                    <div class="breakdown-grid">
+                        <!-- HOC Transactions -->
+                        <div class="breakdown-card">
+                            <h4>HOC Transactions</h4>
+                            <div class="breakdown-details">
+                                <p>Total Count: <span id="hocCount">0</span></p>
+                                <p>Unique Serial Count: <span id="hocUniqueSerialCount">0</span></p>
+                                <p>Total Amount: <span id="hocAmount">0.00 MMK</span></p>
+
+                                <div class="credit-debit-breakdown">
+                                    <div class="credit-breakdown">
+                                        <h5>Credit</h5>
+                                        <p>Count: <span id="hocCreditCount">0</span></p>
+                                        <p>Amount: <span id="hocCreditAmount">0.00 MMK</span></p>
+                                    </div>
+                                    <div class="debit-breakdown">
+                                        <h5>Debit</h5>
+                                        <p>Count: <span id="hocDebitCount">0</span></p>
+                                        <p>Amount: <span id="hocDebitAmount">0.00 MMK</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- IBD Transactions -->
+                        <div class="breakdown-card">
+                            <h4>IBD Transactions</h4>
+                            <div class="breakdown-details">
+                                <p>Total Count: <span id="ibdCount">0</span></p>
+                                <p>Unique Serial Count: <span id="ibdUniqueSerialCount">0</span></p>
+                                <p>Total Amount: <span id="ibdAmount">0.00 MMK</span></p>
+
+                                <div class="credit-debit-breakdown">
+                                    <div class="credit-breakdown">
+                                        <h5>Credit</h5>
+                                        <p>Count: <span id="ibdCreditCount">0</span></p>
+                                        <p>Amount: <span id="ibdCreditAmount">0.00 MMK</span></p>
+                                    </div>
+                                    <div class="debit-breakdown">
+                                        <h5>Debit</h5>
+                                        <p>Count: <span id="ibdDebitCount">0</span></p>
+                                        <p>Amount: <span id="ibdDebitAmount">0.00 MMK</span></p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Table Data Section -->
+            <section class="table-section">
+                <div class="table-container">
+                    <h3>Transaction Data by Date</h3>
+                    <div class="table-responsive">
+                        <table id="transactionTable" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th colspan="2">HOC Credit</th>
+                                    <th colspan="2">HOC Debit</th>
+                                    <th colspan="2">IBD Credit</th>
+                                    <th colspan="2">IBD Debit</th>
+                                </tr>
+                                <tr>
+                                    <th></th>
+                                    <th>Count</th>
+                                    <th>Amount</th>
+                                    <th>Count</th>
+                                    <th>Amount</th>
+                                    <th>Count</th>
+                                    <th>Amount</th>
+                                    <th>Count</th>
+                                    <th>Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody id="transactionTableBody">
+                                <!-- Table data will be populated dynamically -->
+                                <tr class="empty-table-message">
+                                    <td colspan="9">No data available. Please upload CSV files to view transaction data.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Visualization Section -->
+            <section class="visualization-section">
+                <div class="visualization-container">
+                    <h3>Visualizations</h3>
+                    <div class="chart-container">
+                        <canvas id="transactionTypeChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="currencyChart"></canvas>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Financial Transaction Dashboard V2.0 &copy; 2023</p>
+        </footer>
+    </div>
+
+    <!-- JavaScript Files -->
+    <script>
+        // Check if Web Workers are supported
+        if (window.Worker) {
+            console.log('Web Workers are supported in this browser');
+        } else {
+            console.warn('Web Workers are not supported in this browser. Falling back to main thread processing.');
+        }
+
+        // Add error handling for script loading
+        window.addEventListener('error', function(e) {
+            if (e.filename && e.filename.includes('csvWorker.js')) {
+                console.error('Error loading Web Worker:', e.message);
+            }
+        }, true);
+    </script>
+    <script src="fileHandler.js"></script>
+    <script src="dataProcessor.js"></script>
+    <script src="visualizer.js"></script>
+    <script src="tableData.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
